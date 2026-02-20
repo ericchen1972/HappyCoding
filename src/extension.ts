@@ -545,8 +545,10 @@ class HappyCodingViewProvider implements vscode.WebviewViewProvider {
                     }
                     .btn:hover:not(:disabled) { color: var(--vscode-foreground); }
                     .btn.active { color: #f1c40f; }
-                    .msg { margin-bottom: 10px; padding: 5px; border-radius: 4px; background: var(--vscode-textBlockQuote-background); }
-                    .msg.me { opacity: 0.75; }
+                    .msg { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 15px; }
+                    .avatar { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; background: var(--vscode-editor-background); border: 1px solid var(--vscode-panel-border); flex-shrink: 0; }
+                    .msg-content { flex: 1; padding: 8px 10px; border-radius: 6px; background: var(--vscode-textBlockQuote-background); overflow-x: auto; }
+                    .msg.me .msg-content { opacity: 0.85; }
                     .user { font-weight: bold; margin-right: 5px; }
                     .user.me { color: var(--vscode-textLink-foreground, #3498db); }
                     .user.other { color: #e83e8c; }
@@ -602,11 +604,20 @@ class HappyCodingViewProvider implements vscode.WebviewViewProvider {
                                 if (data.to === 'all') {
                                     textContent = '📢 <span style="color: #f1c40f;">' + data.text + '</span>';
                                 }
-                                let html = '<span class="' + userClass + '">' + data.from + '</span>: ' + textContent;
+                                
+                                const avatarSrc = 'https://github.com/' + data.gitUser + '.png';
+                                const fallbackAvatar = 'https://api.dicebear.com/7.x/bottts/svg?seed=' + data.from;
+                                
+                                let html = '<img src="' + avatarSrc + '" class="avatar" onerror="this.onerror=null; this.src=\\'' + fallbackAvatar + '\\';" />';
+                                html += '<div class="msg-content">';
+                                html += '<div style="margin-bottom: 4px;"><span class="' + userClass + '">' + data.from + '</span></div>';
+                                html += '<div style="word-wrap: break-word;">' + textContent + '</div>';
+                                
                                 if (data.code) {
                                     const encodedCode = data.code.replace(/</g, '&lt;').replace(/>/g, '&gt;');
-                                    html += '<div style="position:relative;"><button class="copy-btn" onclick="copyCode(this)">Copy</button><pre><code>' + encodedCode + '</code></pre></div>';
+                                    html += '<div style="position:relative; margin-top: 8px;"><button class="copy-btn" onclick="copyCode(this)">Copy</button><pre><code>' + encodedCode + '</code></pre></div>';
                                 }
+                                html += '</div>';
                                 div.innerHTML = html;
                             }
                             messages.appendChild(div);
@@ -655,6 +666,18 @@ class HappyCodingViewProvider implements vscode.WebviewViewProvider {
         }
         this._updateHtml();
         this._view?.webview.postMessage({ type: 'clearPresence' });
+        
+        try {
+            const workspaceFolders = vscode.workspace.workspaceFolders;
+            if (workspaceFolders) {
+                const statePath = path.join(workspaceFolders[0].uri.fsPath, '.happycoding', '.connected');
+                if (fs.existsSync(statePath)) {
+                    fs.unlinkSync(statePath);
+                }
+            }
+        } catch (e) {
+            // ignore
+        }
     }
 
     public async connectToAbly() {
@@ -674,6 +697,13 @@ class HappyCodingViewProvider implements vscode.WebviewViewProvider {
 
             this._realtime.connection.on('connected', () => {
                 outputChannel.appendLine(`SUCCESS: Connected to ${config.repoId}`);
+                
+                try {
+                    const happyDir = path.join(root, '.happycoding');
+                    if (!fs.existsSync(happyDir)) fs.mkdirSync(happyDir, { recursive: true });
+                    fs.writeFileSync(path.join(happyDir, '.connected'), 'true');
+                } catch(e) {}
+                
                 this._updateHtml(); // Toggle button to 🔌
                 this._subscribeToEvents(config, root);
             });
@@ -744,6 +774,7 @@ class HappyCodingViewProvider implements vscode.WebviewViewProvider {
                     to: data.to,
                     text: content,
                     code: data.code,
+                    gitUser: data.from,
                     isMe: data.from === config.git_username
                 });
             }
@@ -769,7 +800,7 @@ class HappyCodingViewProvider implements vscode.WebviewViewProvider {
 
     public async postMessageToAbly(target: string, content: string, config: any) {
         if (this._view) {
-            this._view.webview.postMessage({ type: 'newMsg', from: 'Me', to: target, text: content, isMe: true });
+            this._view.webview.postMessage({ type: 'newMsg', from: 'Me', to: target, text: content, gitUser: config.git_username, isMe: true });
         }
         if (!this._realtime) {
             outputChannel.appendLine('Ably not connected. Sending skip.');

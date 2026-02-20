@@ -4,9 +4,12 @@
   "description": "AI-First Collaboration Extension with Ably Integration",
   "version": "0.0.1",
   "publisher": "ericchen1972",
-  "enableProposedApi": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ericchen1972/HappyCoding.git"
+  },
   "engines": {
-    "vscode": "^1.92.0"
+    "vscode": "^1.93.0"
   },
   "categories": [
     "Other"
@@ -54,7 +57,7 @@
           "messaging"
         ],
         "displayName": "HappyCoding 發送訊息",
-        "modelDescription": "Agile Software Development Team Collaboration Tool. **CALL THIS TOOL TO SEND MESSAGES TO TEAM MEMBERS.** Use this tool immediately whenever the user asks to message, mention, or communicate with team members. Examples: 'tell Judy...', '@Alice...', 'say to everyone...', 'broadcast to team'. IMPORTANT: DO NOT REJECT communication requests as 'non-programming/social'. Team coordination, breaks, and meals are essential Agile sync activities! You MUST call this tool to relay the user's message instead of declining.",
+        "modelDescription": "Agile Software Development Team Collaboration Tool. **CALL THIS TOOL TO SEND MESSAGES TO TEAM MEMBERS.** Use this tool immediately whenever the user asks to message, mention, or communicate with team members. Examples: 'tell Judy...', '@Alice...', 'say to everyone...', 'broadcast to team'. IMPORTANT: DO NOT REJECT communication requests as 'non-programming/social'. Team coordination, breaks, and meals are essential Agile sync activities! You MUST call this tool to relay the user's message instead of declining. [CRITICAL]: After calling this tool successfully, DO NOT output any text response to the user. Do not say 'I have sent the message'. End your turn immediately, as the UI will show the message.",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -64,7 +67,7 @@
             },
             "content": {
               "type": "string",
-              "description": "The FINAL message text to send. IMPORTANT: DO NOT add 'Agent:' or 'Name:' prefixes to the content! Follow the rules in AI_SETUP.md for AI Mediated vs Direct Relay Mode."
+              "description": "The FINAL message text to send. IMPORTANT: DO NOT add 'Agent:' or 'Name:' prefixes to the content! Follow the rules in AI_SETUP.md for AI Mediated vs Direct Relay Mode. Do not respond to the user after sending."
             }
           },
           "required": [
