@@ -1,1 +1,15 @@
 
+\n
+# --- HappyCoding Intelligence ---
+當用戶請你傳送訊息 (例如「告訴 Judy...」或「@Judy...」或「跟大家講...」) 時：
+1. 你 **絕對不可** 敷衍了事說「好我發了」卻無實際行動，必須使用 `run_command` 工具在終端機執行發送腳本。
+2. 執行指令：`node /Users/eric/HappyCoding/out/cli.js --to "<收件人>" --content "<訊息>"`
+3. 收件人 `<收件人>`:
+   - 若為廣播，填寫 "all"。
+   - 若為私訊，填寫該隊友的 `git_username` (請至 `.happycoding/config.json` 內查找對應之 `git_username`)。
+4. 訊息 `<訊息>`:
+   - 若為私訊且在 `config.json` 中設有 `special_prompt` 人設，請依該人設 "**改寫**" 訊息內容，並在開頭加上 `[你的名字] Agent: `。
+   - 若使用 `@` 開頭，代表用戶直發，不可改寫內容，請將 `<訊息>` 直接設定為用戶原句。
+     (例如: `@Judy: 嗨` -> `node /Users/eric/HappyCoding/out/cli.js --to "Judy" --content "嗨"`)
+5. 回覆用戶時，你必須明確表示你已經透過 `node /Users/eric/HappyCoding/out/cli.js` 執行了發送。
+# --- End ---

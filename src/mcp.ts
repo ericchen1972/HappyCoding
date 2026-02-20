@@ -74,16 +74,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                             type: "string",
                             description: "The FINAL message text to send.\nIMPORTANT RULES:\n1. If `to` == 'all', ignore individual `special_prompt`s and ALWAYS use the global `system_prompt` (from `happycoding_get_team`) to style your response.\n2. If `to` is a specific user, use THEIR `special_prompt`.\n3. DO NOT add 'Agent:' or 'Name:' prefixes! The UI will handle it automatically. Just send the rewritten content."
                         },
-                        is_agent: {
-                            type: "boolean",
-                            description: "Set to true if using 'AI Mediated Mode' (acting as an agent helping the user). Set to false if using 'Direct Relay Mode' (user used a '@' to talk directly)."
-                        },
                         code: {
                             type: "string",
                             description: "Optional. If the user's message contains code blocks, put the code here instead of in the content. This will be formatted appropriately for the team."
                         }
                     },
-                    required: ["project_path", "to", "content", "is_agent"]
+                    required: ["project_path", "to", "content"]
                 }
             }
         ]
@@ -117,21 +113,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             return { content: [{ type: "text", text: "Invalid arguments" }], isError: true };
         }
         
-        const args = argsStr as { project_path: string, to: string, content: string, code?: string, is_agent: boolean };
+        const args = argsStr as { project_path: string, to: string, content: string, code?: string };
         const config = readConfig(args.project_path);
 
         if (!config || !config.ably_apiKey || !config.repoId || !config.git_username) {
             return { 
-                content: [{ type: "text", text: `[Action Required]: You have not configured HappyCoding! Please open the HappyCoding Settings panel in VS Code and set your Git Username, Repo ID, and Ably API Key.` }], 
+                content: [{ type: "text", text: `[Action Required]: Please tell the user: "You have not configured HappyCoding! Please open the HappyCoding Settings panel in VS Code and set your Git Username, Repo ID, and Ably API Key."` }], 
                 isError: true 
-            };
-        }
-
-        const statePath = path.join(args.project_path, '.happycoding', '.connected');
-        if (!fs.existsSync(statePath)) {
-            return {
-                content: [{ type: "text", text: `[Action Required]: You are not currently connected to the HappyCoding channel! Please find the HappyCoding panel in the VS Code sidebar and click the '⚡ Connect to Ably' button first.` }],
-                isError: true
             };
         }
 
@@ -159,7 +147,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                             to: targetGitName, 
                             content: args.content,
                             code: args.code,
-                            is_agent: args.is_agent
+                            is_agent: true
                         });
                         clearTimeout(timeout);
                         resolve();
@@ -171,7 +159,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
                 realtime.connection.once('failed', (sc) => {
                     clearTimeout(timeout);
-                    reject(new Error(`Ably Connection Failed: ${sc.reason?.message || "Unknown error"}`));
+                    reject(new Error(`[Action Required]: Ably Connection Failed! Please tell the user: "It seems you are not connected to the HappyCoding channel or your settings are incorrect. Please ensure you have clicked the '⚡ Connect' button in the HappyCoding panel, or check your API key." (Reason: ${sc.reason?.message || "Unknown error"})`));
                 });
             });
 
@@ -182,7 +170,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         } catch (error: any) {
             realtime.close();
             return {
-                content: [{ type: "text", text: `❌ Failed to send message: ${error.message}` }],
+                content: [{ type: "text", text: `❌ Failed to send message.\n${error.message}\n[CRITICAL]: You MUST inform the user about this failure and tell them to check their connection/settings.` }],
                 isError: true
             };
         }

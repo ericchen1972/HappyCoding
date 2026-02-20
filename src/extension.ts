@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as Ably from 'ably';
 import { execSync } from 'child_process';
+import * as https from 'https';
 
 let outputChannel: vscode.OutputChannel;
 
@@ -506,6 +507,36 @@ class HappyCodingViewProvider implements vscode.WebviewViewProvider {
                 case 'disconnect':
                     this.disconnectFromAbly();
                     break;
+                case 'sendDirect':
+                    const workspaceFolders = vscode.workspace.workspaceFolders;
+                    if (workspaceFolders) {
+                        const rootPath = workspaceFolders[0].uri.fsPath;
+                        const currentConfig = readConfig(rootPath);
+                        this.postMessageToAbly(data.to, data.text, currentConfig);
+                    }
+                    break;
+                case 'showError':
+                    vscode.window.showErrorMessage(data.message);
+                    break;
+                case 'uploadImage':
+                    vscode.window.withProgress({
+                        location: vscode.ProgressLocation.Window,
+                        title: "Uploading image...",
+                        cancellable: false
+                    }, async () => {
+                        try {
+                            const url = await uploadImageToUguu(data.data);
+                            this._view?.webview.postMessage({ type: 'uploadComplete' });
+                            const fols = vscode.workspace.workspaceFolders;
+                            if (fols) {
+                                const cfg = readConfig(fols[0].uri.fsPath);
+                                this.postMessageToAbly(data.to, 'Sent an image', cfg, url);
+                            }
+                        } catch (err: any) {
+                            this._view?.webview.postMessage({ type: 'uploadError', error: err.message });
+                        }
+                    });
+                    break;
             }
         });
         this._updateHtml();
@@ -517,11 +548,13 @@ class HappyCodingViewProvider implements vscode.WebviewViewProvider {
         
         // Read theme config
         let codeTheme = 'atom-one-dark';
+        let gitUsername = '';
         const workspaceFolders = vscode.workspace.workspaceFolders;
         if (workspaceFolders) {
             const config = readConfig(workspaceFolders[0].uri.fsPath);
-            if (config && config.code_theme) {
-                codeTheme = config.code_theme;
+            if (config) {
+                if (config.code_theme) codeTheme = config.code_theme;
+                if (config.git_username) gitUsername = config.git_username;
             }
         }
         
@@ -558,12 +591,33 @@ class HappyCodingViewProvider implements vscode.WebviewViewProvider {
                     .online-user { color: #4ec9b0; font-size: 12px; margin-bottom: 6px; display: flex; align-items: center; }
                     .online-user::before { content: "●"; color: #4ec9b0; margin-right: 6px; font-size: 8px; }
                     .status-tag { font-size: 9px; padding: 1px 4px; border-radius: 3px; background: #333; margin-left: 5px; opacity: 0.8; }
+                    
+                    /* Input Area Styles */
+                    #input-area { display: flex; flex-direction: column; border-top: 1px solid var(--vscode-panel-border); padding: 10px; background: var(--vscode-editor-background); flex-shrink: 0; }
+                    #target-tag-container { display: flex; gap: 5px; margin-bottom: 5px; min-height: 18px; }
+                    .target-tag { background: var(--vscode-button-background); color: var(--vscode-button-foreground); padding: 2px 6px; border-radius: 10px; font-size: 10px; display: flex; align-items: center; gap: 4px; }
+                    .target-tag .remove { cursor: pointer; font-weight: bold; opacity: 0.7; }
+                    .target-tag .remove:hover { opacity: 1; }
+                    .input-row { display: flex; gap: 8px; align-items: flex-end; }
+                    /* Added box-sizing to textarea to stabilize scrollHeight and padding calculations */
+                    #msg-input { box-sizing: border-box; flex: 1; resize: none; border: 1px solid var(--vscode-input-border); background: var(--vscode-input-background); color: var(--vscode-input-foreground); padding: 8px; font-family: inherit; font-size: 13px; border-radius: 4px; overflow-y: hidden; max-height: 120px; min-height: 32px; height: 32px; outline: none; line-height: 1.2; }
+                    #msg-input:focus { border-color: var(--vscode-focusBorder); }
+                    #send-btn { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; border-radius: 4px; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 14px; opacity: 0.9; flex-shrink: 0; }
+                    #send-btn:hover { opacity: 1; }
+                    #send-btn:active { transform: scale(0.95); }
                 </style>
             </head>
             <body>
                 <div id="chat">
                     <div class="header-container"><h3>Messages</h3></div>
                     <div id="messages"></div>
+                    <div id="input-area" style="display: ${isConnected ? 'flex' : 'none'};">
+                        <div id="target-tag-container"></div>
+                        <div class="input-row">
+                            <textarea id="msg-input" placeholder="Type a message... (Shift+Enter for newline)" rows="1"></textarea>
+                            <button id="send-btn" title="Send (Enter)"><svg style="width: 16px; height: 16px; fill: currentColor;" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path d="M440 6.5L24 246.4c-34.4 19.9-31.1 70.8 5.7 85.9L144 379.6V464c0 46.4 59.2 65.5 86.6 28.6l43.8-59.1 111.9 46.2c5.9 2.4 12.1 3.6 18.3 3.6 8.2 0 16.3-2.1 23.6-6.2 12.8-7.2 21.6-20 23.9-34.5l59.4-387.2c6.1-40.1-36.9-68.8-71.5-48.9zM192 464v-64.6l36.6 15.1L192 464zm212.6-28.7l-153.8-63.5L391 169.5c10.7-15.5-9.5-33.5-23.7-21.2L155.8 332.6 48 288 464 48l-59.4 387.3z"/></svg></button>
+                        </div>
+                    </div>
                 </div>
                 <div id="presence">
                     <div class="header-container">
@@ -611,7 +665,16 @@ class HappyCodingViewProvider implements vscode.WebviewViewProvider {
                                 let html = '<img src="' + avatarSrc + '" class="avatar" onerror="this.onerror=null; this.src=\\'' + fallbackAvatar + '\\';" />';
                                 html += '<div class="msg-content">';
                                 html += '<div style="margin-bottom: 4px;"><span class="' + userClass + '">' + data.from + '</span></div>';
-                                html += '<div style="word-wrap: break-word;">' + textContent + '</div>';
+                                html += '<div style="word-wrap: break-word; white-space: pre-wrap;">' + textContent + '</div>';
+                                
+                                if (data.imageUrl) {
+                                    html += '<div style="margin-top: 8px;">';
+                                    html += '<img src="' + data.imageUrl + '" onerror="this.onerror=null; this.src=\\'https://gods.tw/images/img_gone.webp\\';" style="max-width: 100%; max-height: 300px; border-radius: 4px; border: 1px solid var(--vscode-panel-border); margin-bottom: 5px; display: block;" />';
+                                    html += '<div class="btn-group">';
+                                    html += '<button class="copy-btn" style="position: static; opacity: 0.8; margin-right: 5px;" onclick="navigator.clipboard.writeText(\\'' + data.imageUrl + '\\'); const o=this.textContent; this.textContent=\\'Copied!\\'; setTimeout(()=>this.textContent=o, 2000)">Copy URL</button>';
+                                    html += '<a href="' + data.imageUrl + '" target="_blank" style="text-decoration: none;"><button class="copy-btn" style="position: static; opacity: 0.8;">Open</button></a>';
+                                    html += '</div></div>';
+                                }
                                 
                                 if (data.code) {
                                     const encodedCode = data.code.replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -630,13 +693,28 @@ class HappyCodingViewProvider implements vscode.WebviewViewProvider {
                             messages.scrollTop = messages.scrollHeight;
                         } else if (data.type === 'presenceUpdate') {
                             const usersDiv = document.getElementById('users');
-                            usersDiv.innerHTML = data.members.map(m => '<div class="online-user">' + m.nick + ' <span class="status-tag">' + m.git + '</span></div>').join('');
+                            // Check if myself
+                            const myGitUser = "${gitUsername}";
+                            usersDiv.innerHTML = data.members.map(m => {
+                                const isMe = m.git === myGitUser;
+                                const title = isMe ? "This is you" : "Click to message privately";
+                                const cursorStyle = isMe ? "cursor:default;" : "cursor:pointer;";
+                                return '<div class="online-user" data-git="' + m.git + '" style="' + cursorStyle + '" title="' + title + '">' + m.nick + ' <span class="status-tag">' + m.git + '</span></div>';
+                            }).join('');
                         } else if (data.type === 'clearPresence') {
                             document.getElementById('users').innerHTML = '<div style="opacity:0.5; font-size:11px;">Disconnected</div>';
                         } else if (data.type === 'changeTheme') {
                             const link = document.getElementById('theme-link');
                             if (link) {
                                 link.href = 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/' + data.theme + '.min.css';
+                            }
+                        } else if (data.type === 'uploadComplete' || data.type === 'uploadError') {
+                            const msgInput = document.getElementById('msg-input');
+                            msgInput.placeholder = "Type a message... (Shift+Enter for newline)";
+                            msgInput.disabled = false;
+                            msgInput.focus();
+                            if (data.type === 'uploadError') {
+                                vscode.postMessage({ type: 'showError', message: 'Image upload failed: ' + data.error });
                             }
                         }
                     });
@@ -652,6 +730,103 @@ class HappyCodingViewProvider implements vscode.WebviewViewProvider {
                                 console.error('Failed to copy: ', err);
                             });
                         }
+                    }
+
+                    // Native Input Logic
+                    let currentTarget = 'all';
+                    
+                    function updateTargetUI() {
+                        const container = document.getElementById('target-tag-container');
+                        if (currentTarget === 'all') {
+                            container.innerHTML = '';
+                        } else {
+                            container.innerHTML = '<div class="target-tag">@' + currentTarget + ' <span class="remove" onclick="setTarget(\\'all\\')">x</span></div>';
+                        }
+                    }
+
+                    window.setTarget = function(target) {
+                        currentTarget = target;
+                        updateTargetUI();
+                        document.getElementById('msg-input').focus();
+                    };
+
+                    document.getElementById('users').addEventListener('click', (e) => {
+                        const userNode = e.target.closest('.online-user');
+                        if (userNode) {
+                            const gitName = userNode.getAttribute('data-git');
+                            const myGitUser = "${gitUsername}";
+                            if (gitName && gitName !== myGitUser) {
+                                setTarget(gitName);
+                            }
+                        }
+                    });
+
+                    const msgInput = document.getElementById('msg-input');
+                    const sendBtn = document.getElementById('send-btn');
+                    
+                    function sendNativeMessage() {
+                        const text = msgInput.value.trim();
+                        if (text) {
+                            vscode.postMessage({ type: 'sendDirect', to: currentTarget, text: text });
+                            msgInput.value = '';
+                            msgInput.style.height = '32px'; // Reset to default height
+                            setTarget('all'); // default back to all after sending
+                        }
+                    }
+
+                    if (msgInput) {
+                        let isComposing = false;
+                        msgInput.addEventListener('compositionstart', () => { isComposing = true; });
+                        msgInput.addEventListener('compositionend', () => { isComposing = false; });
+
+                        msgInput.addEventListener('keydown', (e) => {
+                            if (e.key === 'Enter' && !e.shiftKey) {
+                                if (isComposing || e.isComposing) return;
+                                e.preventDefault();
+                                sendNativeMessage();
+                            }
+                        });
+                        
+                        // Handle image paste
+                        msgInput.addEventListener('paste', handleImageInput);
+
+                        function handleImageInput(e) {
+                            const items = e.clipboardData?.items;
+                            if (!items) return;
+                            
+                            for (let i = 0; i < items.length; i++) {
+                                const item = items[i];
+                                if (item.kind === 'file' && item.type.startsWith('image/')) {
+                                    e.preventDefault();
+                                    const blob = item.getAsFile();
+                                    const reader = new FileReader();
+                                    reader.onload = function(event) {
+                                        vscode.postMessage({ type: 'uploadImage', data: event.target.result, to: currentTarget });
+                                        msgInput.placeholder = "Uploading image...";
+                                        msgInput.disabled = true;
+                                    };
+                                    reader.readAsDataURL(blob);
+                                    break;
+                                }
+                            }
+                        }
+
+                        msgInput.addEventListener('input', function() {
+                            this.style.height = '32px'; // Reset height temporarily
+                            const newHeight = this.scrollHeight;
+                            if (newHeight > 32) {
+                                this.style.height = Math.min(newHeight, 120) + 'px'; // Cap at max-height visually too
+                            }
+                            if (newHeight > 120) {
+                                this.style.overflowY = 'auto';
+                            } else {
+                                this.style.overflowY = 'hidden';
+                            }
+                        });
+                    }
+
+                    if (sendBtn) {
+                        sendBtn.addEventListener('click', sendNativeMessage);
                     }
                 </script>
             </body>
@@ -765,7 +940,6 @@ class HappyCodingViewProvider implements vscode.WebviewViewProvider {
                     displayName = `Agent ${displayName}`;
                 }
 
-                // If message is encrypted, we could decrypt here later.
                 const content = data.content;
 
                 this._view?.webview.postMessage({ 
@@ -774,6 +948,7 @@ class HappyCodingViewProvider implements vscode.WebviewViewProvider {
                     to: data.to,
                     text: content,
                     code: data.code,
+                    imageUrl: data.imageUrl,
                     gitUser: data.from,
                     isMe: data.from === config.git_username
                 });
@@ -798,17 +973,14 @@ class HappyCodingViewProvider implements vscode.WebviewViewProvider {
         channel.subscribe('message', processMessage);
     }
 
-    public async postMessageToAbly(target: string, content: string, config: any) {
-        if (this._view) {
-            this._view.webview.postMessage({ type: 'newMsg', from: 'Me', to: target, text: content, gitUser: config.git_username, isMe: true });
-        }
+    public async postMessageToAbly(target: string, content: string, config: any, imageUrl?: string) {
         if (!this._realtime) {
             outputChannel.appendLine('Ably not connected. Sending skip.');
             return;
         }
         try {
             const channel = this._realtime.channels.get(config.repoId);
-            await channel.publish('message', { from: config.git_username, to: target, content });
+            await channel.publish('message', { from: config.git_username, to: target, content, imageUrl });
         } catch (e) {
             outputChannel.appendLine(`Publish Error: ${e}`);
         }
@@ -922,3 +1094,63 @@ function readConfig(root: string): any {
 }
 
 export function deactivate() {}
+
+/**
+ * Upload an image (base64) to Uguu.se
+ */
+async function uploadImageToUguu(base64Data: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const matches = base64Data.match(/^data:image\/([a-zA-Z0-9]+);base64,(.+)$/);
+        if (!matches || matches.length !== 3) {
+            return reject(new Error('Invalid base64 image data'));
+        }
+
+        const ext = matches[1];
+        const dataBuffer = Buffer.from(matches[2], 'base64');
+        const boundary = '----WebKitFormBoundary' + Math.random().toString(36).substring(2);
+
+        const postData = Buffer.concat([
+            Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="files[]"; filename="image.${ext}"\r\nContent-Type: image/${ext}\r\n\r\n`),
+            dataBuffer,
+            Buffer.from(`\r\n--${boundary}--\r\n`)
+        ]);
+
+        const requestOpts = {
+            hostname: 'uguu.se',
+            port: 443,
+            path: '/upload',
+            method: 'POST',
+            headers: {
+                'Content-Type': `multipart/form-data; boundary=${boundary}`,
+                'Content-Length': postData.length,
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/121.0.0.0 Safari/537.36',
+                'Accept': '*/*'
+            }
+        };
+
+        const req = https.request(requestOpts, (res) => {
+            let body = '';
+            res.on('data', (chunk) => body += chunk);
+            res.on('end', () => {
+                if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+                    try {
+                        const json = JSON.parse(body);
+                        if (json && json.success && json.files && json.files.length > 0) {
+                            resolve(json.files[0].url);
+                        } else {
+                            reject(new Error(`Upload failed: ${body}`));
+                        }
+                    } catch (e) {
+                        reject(new Error(`Upload response parse error: ${body}`));
+                    }
+                } else {
+                    reject(new Error(`Upload failed (${res.statusCode}): ${body}`));
+                }
+            });
+        });
+
+        req.on('error', (e) => reject(e));
+        req.write(postData);
+        req.end();
+    });
+}

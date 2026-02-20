@@ -68,6 +68,10 @@
             "content": {
               "type": "string",
               "description": "The FINAL message text to send. IMPORTANT: DO NOT add 'Agent:' or 'Name:' prefixes to the content! Follow the rules in AI_SETUP.md for AI Mediated vs Direct Relay Mode. Do not respond to the user after sending."
+            },
+            "code": {
+                "type": "string",
+                "description": "Optional. If the user's message contains code blocks, put the code here instead of in the content. This will be formatted appropriately for the team."
             }
           },
           "required": [
