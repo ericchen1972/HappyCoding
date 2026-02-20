@@ -200,6 +200,11 @@ class HappyCodingSettingsPanel {
                 case 'bindMcp':
                     this._bindMcp();
                     return;
+                case 'previewTheme':
+                    if (HappyCodingViewProvider.currentView) {
+                        HappyCodingViewProvider.currentView.changeTheme(message.theme);
+                    }
+                    return;
             }
         }, null, this._disposables);
     }
@@ -392,6 +397,17 @@ class HappyCodingSettingsPanel {
                 <div class="field"><label>Ably API Key</label><input type="password" id="ably_apiKey" value="${config.ably_apiKey || ''}"></div>
                 <div class="field"><label>Message Encryption Key (Optional)</label><input type="password" id="message_key" value="${config.message_key || ''}"></div>
                 <div class="field"><label>System Prompt (Agent Vibe)</label><textarea id="system_prompt" rows="3">${config.system_prompt || ''}</textarea></div>
+                <div class="field">
+                    <label>Code Theme</label>
+                    <select id="code_theme">
+                        <option value="atom-one-dark" ${config.code_theme === 'atom-one-dark' || !config.code_theme ? 'selected' : ''}>Atom One Dark (Default)</option>
+                        <option value="github-dark" ${config.code_theme === 'github-dark' ? 'selected' : ''}>GitHub Dark</option>
+                        <option value="monokai" ${config.code_theme === 'monokai' ? 'selected' : ''}>Monokai</option>
+                        <option value="dracula" ${config.code_theme === 'dracula' ? 'selected' : ''}>Dracula</option>
+                        <option value="vs2015" ${config.code_theme === 'vs2015' ? 'selected' : ''}>VS 2015</option>
+                        <option value="github" ${config.code_theme === 'github' ? 'selected' : ''}>GitHub Light</option>
+                    </select>
+                </div>
             </div>
 
             <div id="team" class="content">
@@ -433,6 +449,7 @@ class HappyCodingSettingsPanel {
                         ably_apiKey: document.getElementById('ably_apiKey').value,
                         message_key: document.getElementById('message_key').value,
                         system_prompt: document.getElementById('system_prompt').value,
+                        code_theme: document.getElementById('code_theme').value,
                         team: []
                     };
 
@@ -446,6 +463,10 @@ class HappyCodingSettingsPanel {
 
                     vscode.postMessage({ command: 'save', data });
                 }
+                
+                document.getElementById('code_theme').addEventListener('change', (e) => {
+                    vscode.postMessage({ command: 'previewTheme', theme: e.target.value });
+                });
             </script>
         </body>
         </html>`;
@@ -454,16 +475,24 @@ class HappyCodingSettingsPanel {
 
 class HappyCodingViewProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'happycoding.chatView';
+    public static currentView?: HappyCodingViewProvider;
     private _view?: vscode.WebviewView;
     private _realtime?: Ably.Realtime;
 
     constructor(private readonly _extensionUri: vscode.Uri) {}
+
+    public changeTheme(theme: string) {
+        if (this._view) {
+            this._view.webview.postMessage({ type: 'changeTheme', theme });
+        }
+    }
 
     public updateWorkspace(_root: string) {
         this._updateHtml();
     }
 
     public resolveWebviewView(webviewView: vscode.WebviewView, _context: vscode.WebviewViewResolveContext, _token: vscode.CancellationToken) {
+        HappyCodingViewProvider.currentView = this;
         this._view = webviewView;
         webviewView.webview.options = { enableScripts: true, localResourceRoots: [this._extensionUri] };
         webviewView.webview.onDidReceiveMessage(data => {
@@ -486,14 +515,26 @@ class HappyCodingViewProvider implements vscode.WebviewViewProvider {
         if (!this._view) return;
         const isConnected = !!this._realtime && this._realtime.connection.state === 'connected';
         
+        // Read theme config
+        let codeTheme = 'atom-one-dark';
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        if (workspaceFolders) {
+            const config = readConfig(workspaceFolders[0].uri.fsPath);
+            if (config && config.code_theme) {
+                codeTheme = config.code_theme;
+            }
+        }
+        
         this._view.webview.html = `
             <!DOCTYPE html>
             <html>
             <head>
+                <link id="theme-link" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/${codeTheme}.min.css">
+                <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
                 <style>
                     body { display: flex; height: 100vh; margin: 0; font-family: var(--vscode-font-family); color: var(--vscode-foreground); overflow: hidden; }
-                    #chat { flex: 2; display: flex; flex-direction: column; border-right: 1px solid var(--vscode-panel-border); }
-                    #presence { flex: 1; padding: 10px; background: var(--vscode-editor-background); overflow-y: auto; }
+                    #chat { flex: 3; display: flex; flex-direction: column; border-right: 1px solid var(--vscode-panel-border); }
+                    #presence { flex: 1; min-width: 120px; padding: 10px; background: var(--vscode-editor-background); overflow-y: auto; }
                     #messages { flex: 1; overflow-y: auto; padding: 10px; font-size: 13px; }
                     .header-container { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--vscode-panel-border); margin-bottom: 10px; padding-bottom: 5px; }
                     h3 { font-size: 11px; text-transform: uppercase; margin: 0; color: var(--vscode-descriptionForeground); }
@@ -509,7 +550,9 @@ class HappyCodingViewProvider implements vscode.WebviewViewProvider {
                     .user { font-weight: bold; margin-right: 5px; }
                     .user.me { color: var(--vscode-textLink-foreground, #3498db); }
                     .user.other { color: #e83e8c; }
-                    pre { background: var(--vscode-editor-background); padding: 5px; border-radius: 4px; overflow-x: auto; border: 1px solid var(--vscode-panel-border); font-family: var(--vscode-editor-font-family); font-size: 12px; margin-top: 5px; }
+                    pre { position: relative; background: var(--vscode-editor-background); padding: 5px; border-radius: 4px; overflow-x: auto; border: 1px solid var(--vscode-panel-border); font-family: var(--vscode-editor-font-family); font-size: 12px; margin-top: 5px; }
+                    .copy-btn { position: absolute; top: 10px; right: 10px; z-index: 10; background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; padding: 2px 6px; font-size: 10px; cursor: pointer; border-radius: 3px; opacity: 0.6; transition: opacity 0.2s; }
+                    .copy-btn:hover { opacity: 1; }
                     .online-user { color: #4ec9b0; font-size: 12px; margin-bottom: 6px; display: flex; align-items: center; }
                     .online-user::before { content: "●"; color: #4ec9b0; margin-right: 6px; font-size: 8px; }
                     .status-tag { font-size: 9px; padding: 1px 4px; border-radius: 3px; background: #333; margin-left: 5px; opacity: 0.8; }
@@ -549,21 +592,56 @@ class HappyCodingViewProvider implements vscode.WebviewViewProvider {
                             const messages = document.getElementById('messages');
                             const div = document.createElement('div');
                             div.className = data.isMe ? 'msg me' : 'msg';
-                            const userClass = data.isMe ? 'user me' : 'user other';
-                            let html = '<span class="' + userClass + '">' + data.from + '</span>: ' + data.text;
-                            if (data.code) {
-                                html += '<pre><code>' + data.code.replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</code></pre>';
+                            
+                            if (data.isSystem) {
+                                div.innerHTML = '<span style="color: #e67e22;">' + data.from + ' : ' + data.text + '</span>';
+                            } else {
+                                const userClass = data.isMe ? 'user me' : 'user other';
+                                let textContent = data.text;
+                                
+                                if (data.to === 'all') {
+                                    textContent = '📢 <span style="color: #f1c40f;">' + data.text + '</span>';
+                                }
+                                let html = '<span class="' + userClass + '">' + data.from + '</span>: ' + textContent;
+                                if (data.code) {
+                                    const encodedCode = data.code.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                                    html += '<div style="position:relative;"><button class="copy-btn" onclick="copyCode(this)">Copy</button><pre><code>' + encodedCode + '</code></pre></div>';
+                                }
+                                div.innerHTML = html;
                             }
-                            div.innerHTML = html;
                             messages.appendChild(div);
+                            
+                            // Highlight the newly added code blocks
+                            div.querySelectorAll('pre code:not(.hljs)').forEach((block) => {
+                                hljs.highlightElement(block);
+                            });
+                            
                             messages.scrollTop = messages.scrollHeight;
                         } else if (data.type === 'presenceUpdate') {
                             const usersDiv = document.getElementById('users');
                             usersDiv.innerHTML = data.members.map(m => '<div class="online-user">' + m.nick + ' <span class="status-tag">' + m.git + '</span></div>').join('');
                         } else if (data.type === 'clearPresence') {
                             document.getElementById('users').innerHTML = '<div style="opacity:0.5; font-size:11px;">Disconnected</div>';
+                        } else if (data.type === 'changeTheme') {
+                            const link = document.getElementById('theme-link');
+                            if (link) {
+                                link.href = 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/' + data.theme + '.min.css';
+                            }
                         }
                     });
+
+                    function copyCode(btn) {
+                        const codeBlock = btn.nextElementSibling.querySelector('code');
+                        if (codeBlock) {
+                            navigator.clipboard.writeText(codeBlock.textContent).then(() => {
+                                const originalText = btn.textContent;
+                                btn.textContent = 'Copied!';
+                                setTimeout(() => btn.textContent = originalText, 2000);
+                            }).catch(err => {
+                                console.error('Failed to copy: ', err);
+                            });
+                        }
+                    }
                 </script>
             </body>
             </html>`;
@@ -640,8 +718,8 @@ class HappyCodingViewProvider implements vscode.WebviewViewProvider {
         channel.presence.subscribe(['enter', 'leave', 'present', 'update'], updateUI);
         updateUI();
 
-        // --- Message Receiving ---
-        channel.subscribe('message', (message) => {
+        // --- Message Processing Helper ---
+        const processMessage = (message: any) => {
             const data = message.data;
             if (!data || !data.from || !data.to || !data.content) return;
 
@@ -663,17 +741,35 @@ class HappyCodingViewProvider implements vscode.WebviewViewProvider {
                 this._view?.webview.postMessage({ 
                     type: 'newMsg', 
                     from: displayName, 
+                    to: data.to,
                     text: content,
                     code: data.code,
                     isMe: data.from === config.git_username
                 });
             }
+        };
+
+        // --- Fetch History (Offline messages) ---
+        channel.history({ limit: 30, direction: 'backwards' }).then((resultPage: any) => {
+            if (resultPage && resultPage.items && resultPage.items.length > 0) {
+                // Ably returns history backwards (newest first). Reverse to show oldest first.
+                const historyMessages = resultPage.items.slice().reverse();
+                // Process history messages first
+                historyMessages.forEach(processMessage);
+                // Send a separator message after the history
+                this._view?.webview.postMessage({ type: 'newMsg', from: 'System', text: '--- End of history messages ---', isSystem: true });
+            }
+        }).catch((err: any) => {
+            outputChannel.appendLine(`Error fetching history: ${err.message}`);
         });
+
+        // --- Message Receiving (Live) ---
+        channel.subscribe('message', processMessage);
     }
 
     public async postMessageToAbly(target: string, content: string, config: any) {
         if (this._view) {
-            this._view.webview.postMessage({ type: 'newMsg', from: 'Me', text: content });
+            this._view.webview.postMessage({ type: 'newMsg', from: 'Me', to: target, text: content, isMe: true });
         }
         if (!this._realtime) {
             outputChannel.appendLine('Ably not connected. Sending skip.');
