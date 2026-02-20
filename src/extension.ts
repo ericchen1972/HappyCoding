@@ -395,9 +395,20 @@ class HappyCodingSettingsPanel {
             <div id="general" class="content active">
                 <div class="field"><label>Git Username (Detected)</label><input type="text" id="git_username" value="${config.git_username || ''}"></div>
                 <div class="field"><label>Repo ID / Channel</label><input type="text" id="repoId" value="${config.repoId || ''}"></div>
-                <div class="field"><label>Ably API Key</label><input type="password" id="ably_apiKey" value="${config.ably_apiKey || ''}"></div>
+                <div class="field">
+                    <label>Ably API Key</label>
+                    <p class="info" style="margin-top:2px;">If you are the project owner and don't have an Ably account, please apply at <a href="https://ably.com/" target="_blank">ably.com</a>. If you are not the project owner, please ask the owner for the API Key.</p>
+                    <input type="password" id="ably_apiKey" value="${config.ably_apiKey || ''}">
+                </div>
                 <div class="field"><label>Message Encryption Key (Optional)</label><input type="password" id="message_key" value="${config.message_key || ''}"></div>
-                <div class="field"><label>System Prompt (Agent Vibe)</label><textarea id="system_prompt" rows="3">${config.system_prompt || ''}</textarea></div>
+                <div class="field"><label>System Prompt (Agent Vibe)</label><textarea id="system_prompt" rows="3">${config.system_prompt || 'Clear narrative, polite'}</textarea></div>
+                
+                <div class="field">
+                    <label>DeepL API URL</label>
+                    <p class="info" style="margin-top:2px;">If you need translation features, please input these two fields. If you do not have a DeepL account, please apply at <a href="https://deepl.com" target="_blank">deepl.com</a>.</p>
+                    <input type="text" id="deepl_apiUrl" value="${config.deepl_apiUrl || 'https://api-free.deepl.com/v2/translate'}">
+                </div>
+                <div class="field"><label>DeepL API Key</label><input type="password" id="deepl_apiKey" value="${config.deepl_apiKey || ''}"></div>
                 <div class="field">
                     <label>Code Theme</label>
                     <select id="code_theme">
@@ -450,6 +461,8 @@ class HappyCodingSettingsPanel {
                         ably_apiKey: document.getElementById('ably_apiKey').value,
                         message_key: document.getElementById('message_key').value,
                         system_prompt: document.getElementById('system_prompt').value,
+                        deepl_apiUrl: document.getElementById('deepl_apiUrl').value,
+                        deepl_apiKey: document.getElementById('deepl_apiKey').value,
                         code_theme: document.getElementById('code_theme').value,
                         team: []
                     };
@@ -537,6 +550,28 @@ class HappyCodingViewProvider implements vscode.WebviewViewProvider {
                         }
                     });
                     break;
+                case 'translateMessage':
+                    vscode.window.withProgress({
+                        location: vscode.ProgressLocation.Window,
+                        title: "Translating...",
+                        cancellable: false
+                    }, async () => {
+                        const workspaceFolders = vscode.workspace.workspaceFolders;
+                        if (!workspaceFolders) return;
+                        const config = readConfig(workspaceFolders[0].uri.fsPath);
+                        if (!config || !config.deepl_apiKey || !config.deepl_apiUrl) {
+                            this._view?.webview.postMessage({ type: 'translationError', error: 'DeepL config missing.', msgId: data.msgId });
+                            return;
+                        }
+                        try {
+                            const userLocale = data.locale || vscode.env.language;
+                            const translatedText = await translateWithDeepL(data.text, config.deepl_apiUrl, config.deepl_apiKey, userLocale);
+                            this._view?.webview.postMessage({ type: 'translationResult', translatedText, msgId: data.msgId });
+                        } catch (err: any) {
+                            this._view?.webview.postMessage({ type: 'translationError', error: err.message, msgId: data.msgId });
+                        }
+                    });
+                    break;
             }
         });
         this._updateHtml();
@@ -549,12 +584,14 @@ class HappyCodingViewProvider implements vscode.WebviewViewProvider {
         // Read theme config
         let codeTheme = 'atom-one-dark';
         let gitUsername = '';
+        let hasDeepL = false;
         const workspaceFolders = vscode.workspace.workspaceFolders;
         if (workspaceFolders) {
             const config = readConfig(workspaceFolders[0].uri.fsPath);
             if (config) {
                 if (config.code_theme) codeTheme = config.code_theme;
                 if (config.git_username) gitUsername = config.git_username;
+                if (config.deepl_apiKey) hasDeepL = true;
             }
         }
         
@@ -636,12 +673,20 @@ class HappyCodingViewProvider implements vscode.WebviewViewProvider {
                 </div>
                 <script>
                     const vscode = acquireVsCodeApi();
+                    const hasDeepL = ${hasDeepL};
                     document.getElementById('settings-trigger').addEventListener('click', () => vscode.postMessage({ type: 'openSettings' }));
                     const connBtn = document.getElementById('connect-btn');
                     if(connBtn) connBtn.addEventListener('click', () => vscode.postMessage({ type: 'connect' }));
                     const disBtn = document.getElementById('disconnect-btn');
                     if(disBtn) disBtn.addEventListener('click', () => vscode.postMessage({ type: 'disconnect' }));
                     
+                    window.translateMsg = function(msgId, btn, encodedText) {
+                        btn.style.opacity = '1';
+                        btn.textContent = '⏳';
+                        btn.disabled = true;
+                        vscode.postMessage({ type: 'translateMessage', text: decodeURIComponent(encodedText), msgId: msgId, locale: navigator.language });
+                    };
+
                     window.addEventListener('message', event => {
                         const data = event.data;
                         if (data.type === 'newMsg') {
@@ -663,9 +708,17 @@ class HappyCodingViewProvider implements vscode.WebviewViewProvider {
                                 const fallbackAvatar = 'https://api.dicebear.com/7.x/bottts/svg?seed=' + data.from;
                                 
                                 let html = '<img src="' + avatarSrc + '" class="avatar" onerror="this.onerror=null; this.src=\\'' + fallbackAvatar + '\\';" />';
-                                html += '<div class="msg-content">';
-                                html += '<div style="margin-bottom: 4px;"><span class="' + userClass + '">' + data.from + '</span></div>';
-                                html += '<div style="word-wrap: break-word; white-space: pre-wrap;">' + textContent + '</div>';
+                                html += '<div class="msg-content" data-msg-id="msg-' + Math.random().toString(36).substr(2, 9) + '">';
+                                const msgId = 'msg-' + Math.random().toString(36).substr(2, 9);
+                                div.dataset.msgId = msgId;
+                                html += '<div style="margin-bottom: 4px; display: flex; justify-content: space-between; align-items: center;">';
+                                html += '<span class="' + userClass + '">' + data.from + '</span>';
+                                if (hasDeepL && (!data.isMe || data.isAgent)) {
+                                    const encodedText = encodeURIComponent(data.text).replace(/'/g, "%27");
+                                    html += '<button class="btn" style="font-size: 10px; padding: 0 4px; opacity: 0.6; height: auto;" onclick="translateMsg(\\'' + msgId + '\\', this, \\'' + encodedText + '\\')" title="Translate">🌐</button>';
+                                }
+                                html += '</div>';
+                                html += '<div id="' + msgId + '-text" style="word-wrap: break-word; white-space: pre-wrap;">' + textContent + '</div>';
                                 
                                 if (data.imageUrl) {
                                     html += '<div style="margin-top: 8px;">';
@@ -716,6 +769,39 @@ class HappyCodingViewProvider implements vscode.WebviewViewProvider {
                             if (data.type === 'uploadError') {
                                 vscode.postMessage({ type: 'showError', message: 'Image upload failed: ' + data.error });
                             }
+                        } else if (data.type === 'translationResult') {
+                            const textElement = document.getElementById(data.msgId + '-text');
+                            if (textElement) {
+                                const transDiv = document.createElement('div');
+                                transDiv.style.marginTop = '8px';
+                                transDiv.style.paddingTop = '8px';
+                                transDiv.style.borderTop = '1px dashed var(--vscode-panel-border)';
+                                transDiv.style.opacity = '0.9';
+                                transDiv.style.color = 'var(--vscode-descriptionForeground)';
+                                transDiv.innerText = data.translatedText;
+                                textElement.parentNode.appendChild(transDiv);
+                            }
+                            const msgDiv = document.querySelector('[data-msg-id="' + data.msgId + '"]');
+                            if (msgDiv) {
+                                const btn = msgDiv.querySelector('button[title="Translate"]');
+                                if (btn) {
+                                    btn.style.display = 'none';
+                                }
+                            }
+                        } else if (data.type === 'translationError') {
+                            const msgDiv = document.querySelector('[data-msg-id="' + data.msgId + '"]');
+                            if (msgDiv) {
+                                const btn = msgDiv.querySelector('button[title="Translate"]');
+                                if (btn) {
+                                    btn.textContent = '❌';
+                                    setTimeout(() => {
+                                        btn.textContent = '🌐';
+                                        btn.disabled = false;
+                                        btn.style.opacity = '0.6';
+                                    }, 2000);
+                                }
+                            }
+                            vscode.postMessage({ type: 'showError', message: 'Translation failed: ' + data.error });
                         }
                     });
 
@@ -950,7 +1036,8 @@ class HappyCodingViewProvider implements vscode.WebviewViewProvider {
                     code: data.code,
                     imageUrl: data.imageUrl,
                     gitUser: data.from,
-                    isMe: data.from === config.git_username
+                    isMe: data.from === config.git_username,
+                    isAgent: !!data.is_agent
                 });
             }
         };
@@ -1043,7 +1130,9 @@ function initProject(root: string, force: boolean = false) {
             repoId: repoName,
             ably_apiKey: "",
             message_key: null,
-            system_prompt: "有禮貌，說人話",
+            system_prompt: "Clear narrative, polite",
+            deepl_apiUrl: "https://api-free.deepl.com/v2/translate",
+            deepl_apiKey: "",
             team: []
         };
         fs.writeFileSync(configPath, JSON.stringify(defaultConfig, null, 2));
@@ -1145,6 +1234,62 @@ async function uploadImageToUguu(base64Data: string): Promise<string> {
                     }
                 } else {
                     reject(new Error(`Upload failed (${res.statusCode}): ${body}`));
+                }
+            });
+        });
+
+        req.on('error', (e) => reject(e));
+        req.write(postData);
+        req.end();
+    });
+}
+
+/**
+ * Translate text with DeepL
+ */
+async function translateWithDeepL(text: string, apiUrl: string, apiKey: string, userLocale: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const url = new URL(apiUrl);
+        let targetLang = userLocale.split('-')[0].toUpperCase();
+        const lowerLocale = userLocale.toLowerCase();
+        if (lowerLocale === 'zh-tw' || lowerLocale === 'zh-hk' || lowerLocale.includes('hant')) {
+            targetLang = 'ZH-HANT'; // Surprise! DeepL supports Traditional Chinese natively.
+        }
+
+        const postData = JSON.stringify({
+            text: [text],
+            target_lang: targetLang
+        });
+
+        const requestOpts = {
+            hostname: url.hostname,
+            port: url.port || (url.protocol === 'https:' ? 443 : 80),
+            path: url.pathname + url.search,
+            method: 'POST',
+            headers: {
+                'Authorization': `DeepL-Auth-Key ${apiKey}`,
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(postData)
+            }
+        };
+
+        const req = https.request(requestOpts, (res) => {
+            let body = '';
+            res.on('data', (chunk) => body += chunk);
+            res.on('end', () => {
+                if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+                    try {
+                        const json = JSON.parse(body);
+                        if (json && json.translations && json.translations.length > 0) {
+                            resolve(json.translations[0].text);
+                        } else {
+                            reject(new Error(`Translate failed: ${body}`));
+                        }
+                    } catch (e) {
+                        reject(new Error(`Parse error: ${body}`));
+                    }
+                } else {
+                    reject(new Error(`API Error (${res.statusCode}): ${body}`));
                 }
             });
         });
