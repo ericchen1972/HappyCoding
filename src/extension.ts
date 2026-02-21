@@ -1,9 +1,11 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as Ably from 'ably';
 import { execSync } from 'child_process';
 import * as https from 'https';
+import * as crypto from 'crypto';
 
 let outputChannel: vscode.OutputChannel;
 
@@ -329,9 +331,21 @@ class HappyCodingSettingsPanel {
     }
 
     private _saveConfig(data: any) {
+        const secrets = readSecrets();
+        secrets.ably_apiKey = data.ably_apiKey;
+        secrets.deepl_apiKey = data.deepl_apiKey;
+        if (!secrets.message_keys) secrets.message_keys = {};
+        secrets.message_keys[this._workspaceRoot] = data.message_key;
+        writeSecrets(secrets);
+
+        // remove secrets from local config
+        delete data.ably_apiKey;
+        delete data.deepl_apiKey;
+        delete data.message_key;
+
         const configPath = path.join(this._workspaceRoot, '.happycoding', 'config.json');
         fs.writeFileSync(configPath, JSON.stringify(data, null, 2));
-        vscode.window.showInformationMessage('HappyCoding: Configuration saved successfully!');
+        vscode.window.showInformationMessage('HappyCoding: Configuration saved successfully (Secrets stored globally)!');
         this.dispose();
     }
 
@@ -603,9 +617,11 @@ class HappyCodingViewProvider implements vscode.WebviewViewProvider {
                 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
                 <style>
                     body { display: flex; height: 100vh; margin: 0; font-family: var(--vscode-font-family); color: var(--vscode-foreground); overflow: hidden; }
-                    #chat { flex: 3; display: flex; flex-direction: column; border-right: 1px solid var(--vscode-panel-border); }
-                    #presence { flex: 1; min-width: 120px; padding: 10px; background: var(--vscode-editor-background); overflow-y: auto; }
-                    #messages { flex: 1; overflow-y: auto; padding: 10px; font-size: 13px; }
+                    #chat { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+                    #resizer { width: 6px; cursor: col-resize; flex-shrink: 0; background: transparent; transition: background 0.2s; border-left: 1px solid var(--vscode-panel-border); box-sizing: border-box; }
+                    #resizer:hover, #resizer.active { background: var(--vscode-focusBorder); border-left-color: var(--vscode-focusBorder); }
+                    #presence { width: 250px; min-width: 100px; flex-shrink: 0; padding: 10px; background: var(--vscode-editor-background); overflow-y: auto; box-sizing: border-box; }
+                    #messages { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 10px; font-size: 13px; }
                     .header-container { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--vscode-panel-border); margin-bottom: 10px; padding-bottom: 5px; }
                     h3 { font-size: 11px; text-transform: uppercase; margin: 0; color: var(--vscode-descriptionForeground); }
                     .btn-group { display: flex; gap: 5px; }
@@ -656,6 +672,7 @@ class HappyCodingViewProvider implements vscode.WebviewViewProvider {
                         </div>
                     </div>
                 </div>
+                <div id="resizer"></div>
                 <div id="presence">
                     <div class="header-container">
                         <h3>Online Status</h3>
@@ -686,6 +703,38 @@ class HappyCodingViewProvider implements vscode.WebviewViewProvider {
                         btn.disabled = true;
                         vscode.postMessage({ type: 'translateMessage', text: decodeURIComponent(encodedText), msgId: msgId, locale: navigator.language });
                     };
+
+                    // Resizer Logic
+                    const resizer = document.getElementById('resizer');
+                    const presencePanel = document.getElementById('presence');
+                    let isResizing = false;
+
+                    resizer.addEventListener('mousedown', (e) => {
+                        isResizing = true;
+                        resizer.classList.add('active');
+                        document.body.style.cursor = 'col-resize';
+                        document.body.style.userSelect = 'none';
+                    });
+
+                    window.addEventListener('mousemove', (e) => {
+                        if (!isResizing) return;
+                        const containerWidth = document.body.clientWidth;
+                        // Determine new width for presence panel
+                        let newWidth = containerWidth - e.clientX;
+                        // Minimum width for presence, and leave some space for chat minimum
+                        if (newWidth < 100) newWidth = 100;
+                        if (newWidth > containerWidth - 150) newWidth = containerWidth - 150;
+                        presencePanel.style.width = newWidth + 'px';
+                    });
+
+                    window.addEventListener('mouseup', () => {
+                        if (isResizing) {
+                            isResizing = false;
+                            resizer.classList.remove('active');
+                            document.body.style.cursor = '';
+                            document.body.style.userSelect = '';
+                        }
+                    });
 
                     window.addEventListener('message', event => {
                         const data = event.data;
@@ -1014,10 +1063,20 @@ class HappyCodingViewProvider implements vscode.WebviewViewProvider {
             const data = message.data;
             if (!data || !data.from || !data.to || !data.content) return;
 
+            let currentConfig = readConfig(root);
+            
+            let decryptedContent = data.content;
+            if (currentConfig.message_key && currentConfig.message_key.trim() !== '' && typeof data.content === 'string') {
+                decryptedContent = decryptMessage(data.content, currentConfig.message_key);
+            }
+            let decryptedCode = data.code;
+            if (data.code && typeof data.code === 'string' && currentConfig.message_key && currentConfig.message_key.trim() !== '') {
+                decryptedCode = decryptMessage(data.code, currentConfig.message_key);
+            }
+
             // Optional Check: Only show if it's meant for 'all' or specifically for me (git_username)
             if (data.to === 'all' || data.to === config.git_username || data.from === config.git_username) {
                 // Find nickname if available
-                let currentConfig = readConfig(root);
                 const senderConfig = (currentConfig.team || []).find((t: any) => t.git_name === data.from || t.git_username === data.from);
                 const senderName = senderConfig?.nick_name || data.from;
                 
@@ -1026,14 +1085,12 @@ class HappyCodingViewProvider implements vscode.WebviewViewProvider {
                     displayName = `Agent ${displayName}`;
                 }
 
-                const content = data.content;
-
                 this._view?.webview.postMessage({ 
                     type: 'newMsg', 
                     from: displayName, 
                     to: data.to,
-                    text: content,
-                    code: data.code,
+                    text: decryptedContent,
+                    code: decryptedCode,
                     imageUrl: data.imageUrl,
                     gitUser: data.from,
                     isMe: data.from === config.git_username,
@@ -1067,13 +1124,57 @@ class HappyCodingViewProvider implements vscode.WebviewViewProvider {
         }
         try {
             const channel = this._realtime.channels.get(config.repoId);
-            await channel.publish('message', { from: config.git_username, to: target, content, imageUrl });
+            let finalContent = content;
+            if (config.message_key && config.message_key.trim() !== '') {
+                finalContent = encryptMessage(content, config.message_key);
+            }
+            await channel.publish('message', { from: config.git_username, to: target, content: finalContent, imageUrl });
         } catch (e) {
             outputChannel.appendLine(`Publish Error: ${e}`);
         }
     }
 }
 
+
+/**
+ * Encryption / Decryption Utilities
+ */
+const ALGORITHM = 'aes-256-gcm';
+
+function deriveKey(password: string): Buffer {
+    return crypto.createHash('sha256').update(password).digest();
+}
+
+export function encryptMessage(text: string, key: string): string {
+    if (!text || !key) return text;
+    try {
+        const iv = crypto.randomBytes(12);
+        const cipher = crypto.createCipheriv(ALGORITHM, deriveKey(key), iv);
+        let encrypted = cipher.update(text, 'utf8', 'hex');
+        encrypted += cipher.final('hex');
+        const authTag = cipher.getAuthTag().toString('hex');
+        return `ENC:${iv.toString('hex')}:${authTag}:${encrypted}`;
+    } catch (e) {
+        return text;
+    }
+}
+
+export function decryptMessage(encryptedText: string, key: string): string {
+    if (!encryptedText || typeof encryptedText !== 'string' || !key || !encryptedText.startsWith('ENC:')) return encryptedText;
+    try {
+        const parts = encryptedText.split(':');
+        if (parts.length !== 4) return encryptedText;
+        const [_, ivHex, authTagHex, contentHex] = parts;
+        
+        const decipher = crypto.createDecipheriv(ALGORITHM, deriveKey(key), Buffer.from(ivHex, 'hex'));
+        decipher.setAuthTag(Buffer.from(authTagHex, 'hex'));
+        let decrypted = decipher.update(contentHex, 'hex', 'utf8');
+        decrypted += decipher.final('utf8');
+        return decrypted;
+    } catch (e) {
+        return encryptedText;
+    }
+}
 
 /**
  * 在 team 中查找成員，支援 git_name 或 nick_name 的模糊配對
@@ -1177,9 +1278,48 @@ function checkAndInjectCursorRules(root: string) {
     }
 }
 
+function getSecretsPath(): string {
+    return path.join(os.homedir(), '.happycoding', 'secrets.json');
+}
+
+function readSecrets(): any {
+    const p = getSecretsPath();
+    if (fs.existsSync(p)) {
+        try {
+            return JSON.parse(fs.readFileSync(p, 'utf8'));
+        } catch (e) {}
+    }
+    return { message_keys: {} };
+}
+
+function writeSecrets(secrets: any) {
+    const p = getSecretsPath();
+    const dir = path.dirname(p);
+    if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+    }
+    fs.writeFileSync(p, JSON.stringify(secrets, null, 2));
+}
+
 function readConfig(root: string): any {
     const configPath = path.join(root, '.happycoding', 'config.json');
-    return fs.existsSync(configPath) ? JSON.parse(fs.readFileSync(configPath, 'utf8')) : null;
+    let config: any = null;
+    if (fs.existsSync(configPath)) {
+        try {
+            config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        } catch (e) {}
+    }
+    if (!config) return null;
+
+    const secrets = readSecrets();
+    config.ably_apiKey = secrets.ably_apiKey || config.ably_apiKey || "";
+    config.deepl_apiKey = secrets.deepl_apiKey || config.deepl_apiKey || "";
+    
+    if (secrets.message_keys && secrets.message_keys[root]) {
+        config.message_key = secrets.message_keys[root];
+    }
+    
+    return config;
 }
 
 export function deactivate() {}

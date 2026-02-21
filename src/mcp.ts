@@ -6,14 +6,80 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
+import * as crypto from 'crypto';
 import * as Ably from 'ably';
+
+function getSecretsPath(): string {
+    return path.join(os.homedir(), '.happycoding', 'secrets.json');
+}
+
+function readSecrets(): any {
+    const p = getSecretsPath();
+    if (fs.existsSync(p)) {
+        try {
+            return JSON.parse(fs.readFileSync(p, 'utf8'));
+        } catch (e) {}
+    }
+    return { message_keys: {} };
+}
 
 function readConfig(workspaceRoot: string): any {
     const configPath = path.join(workspaceRoot, '.happycoding', 'config.json');
+    let config: any = null;
     if (fs.existsSync(configPath)) {
-        return JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        try {
+            config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        } catch (e) {}
     }
-    return null;
+    if (!config) return null;
+
+    const secrets = readSecrets();
+    config.ably_apiKey = secrets.ably_apiKey || config.ably_apiKey || "";
+    config.deepl_apiKey = secrets.deepl_apiKey || config.deepl_apiKey || "";
+    
+    if (secrets.message_keys && secrets.message_keys[workspaceRoot]) {
+        config.message_key = secrets.message_keys[workspaceRoot];
+    }
+    
+    return config;
+}
+
+const ALGORITHM = 'aes-256-gcm';
+
+function deriveKey(password: string): Buffer {
+    return crypto.createHash('sha256').update(password).digest();
+}
+
+export function encryptMessage(text: string, key: string): string {
+    if (!text || !key) return text;
+    try {
+        const iv = crypto.randomBytes(12);
+        const cipher = crypto.createCipheriv(ALGORITHM, deriveKey(key), iv);
+        let encrypted = cipher.update(text, 'utf8', 'hex');
+        encrypted += cipher.final('hex');
+        const authTag = cipher.getAuthTag().toString('hex');
+        return `ENC:${iv.toString('hex')}:${authTag}:${encrypted}`;
+    } catch (e) {
+        return text;
+    }
+}
+
+export function decryptMessage(encryptedText: string, key: string): string {
+    if (!encryptedText || typeof encryptedText !== 'string' || !key || !encryptedText.startsWith('ENC:')) return encryptedText;
+    try {
+        const parts = encryptedText.split(':');
+        if (parts.length !== 4) return encryptedText;
+        const [_, ivHex, authTagHex, contentHex] = parts;
+        
+        const decipher = crypto.createDecipheriv(ALGORITHM, deriveKey(key), Buffer.from(ivHex, 'hex'));
+        decipher.setAuthTag(Buffer.from(authTagHex, 'hex'));
+        let decrypted = decipher.update(contentHex, 'hex', 'utf8');
+        decrypted += decipher.final('utf8');
+        return decrypted;
+    } catch (e) {
+        return encryptedText;
+    }
 }
 
 function findTeamMember(config: any, nameOrGitName: string): any {
@@ -142,11 +208,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 
                 realtime.connection.once('connected', async () => {
                     try {
+                        let finalContent = args.content;
+                        let finalCode = args.code;
+                        if (config.message_key && config.message_key.trim() !== '') {
+                            finalContent = encryptMessage(args.content, config.message_key);
+                            if (args.code) {
+                                finalCode = encryptMessage(args.code, config.message_key);
+                            }
+                        }
+
                         await channel.publish('message', { 
                             from: config.git_username || 'ai-agent', 
                             to: targetGitName, 
-                            content: args.content,
-                            code: args.code,
+                            content: finalContent,
+                            code: finalCode,
                             is_agent: true
                         });
                         clearTimeout(timeout);
