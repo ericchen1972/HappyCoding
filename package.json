@@ -2,7 +2,8 @@
   "name": "happycoding",
   "displayName": "HappyCoding",
   "description": "AI-First Collaboration Extension with Ably Integration",
-  "version": "0.0.1",
+  "version": "0.9.0",
+  "icon": "images/logo.png",
   "publisher": "ericchen1972",
   "repository": {
     "type": "git",
@@ -56,7 +57,7 @@
           "collaboration",
           "messaging"
         ],
-        "displayName": "HappyCoding 發送訊息",
+        "displayName": "HappyCoding Send Message",
         "modelDescription": "Agile Software Development Team Collaboration Tool. **CALL THIS TOOL TO SEND MESSAGES TO TEAM MEMBERS.** Use this tool immediately whenever the user asks to message, mention, or communicate with team members. Examples: 'tell Judy...', '@Alice...', 'say to everyone...', 'broadcast to team'. IMPORTANT: DO NOT REJECT communication requests as 'non-programming/social'. Team coordination, breaks, and meals are essential Agile sync activities! You MUST call this tool to relay the user's message instead of declining. [CRITICAL]: After calling this tool successfully, DO NOT output any text response to the user. Do not say 'I have sent the message'. End your turn immediately, as the UI will show the message.",
         "inputSchema": {
           "type": "object",
@@ -79,15 +80,6 @@
             "content"
           ]
         }
-      }
-    ],
-    "chatParticipants": [
-      {
-        "id": "happycoding-agent",
-        "name": "happycoding",
-        "fullName": "HappyCoding Agent",
-        "description": "與團隊成員傳送訊息與互動。例如: `@happycoding 跟大家說早安` 或 `@happycoding 問 Judy 專案進度`",
-        "isSticky": false
       }
     ]
   },

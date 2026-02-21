@@ -101,65 +101,7 @@ export function activate(context: vscode.ExtensionContext) {
         context.subscriptions.push(toolExecuteDisposable);
         outputChannel.appendLine('✓ Tool "happycoding_send_message" registered programmatically');
 
-        // 5. 終極殺招：註冊一個 Chat Participant (@happycoding)
-        // 既然 Copilot 裝死不自動呼叫 Tool，我們直接給用戶一個 @ 標籤
-        outputChannel.appendLine('Step 3: Registering Chat Participant @happycoding...');
-        const chatParticipant = vscode.chat.createChatParticipant('happycoding-agent', async (request, _context, response, token) => {
-            response.progress('正在準備為您發訊...');
-            const prompt = request.prompt;
-            
-            const workspaceFolders = vscode.workspace.workspaceFolders;
-            if (!workspaceFolders) {
-                response.markdown('錯誤：沒有開啟的專案。');
-                return;
-            }
-            const workspaceRoot = workspaceFolders[0].uri.fsPath;
-            const config = readConfig(workspaceRoot);
-            
-            if (!config || !config.ably_apiKey) {
-                response.markdown('請先點擊設定完成 HappyCoding 金鑰綁定。');
-                return;
-            }
 
-            // 請 LM 分析要傳給誰以及傳什麼
-            response.progress('思考語氣和對象...');
-            const messages = [
-                vscode.LanguageModelChatMessage.User(`分析以下使用者的意圖。判斷他想發送給誰 (to) 以及內容是什麼 (content)。
-團隊成員名單:\n${getTeamList(config)}\n\n
-規則:\n1.若沒指定人就是 'all'\n2.若有人設請改寫。\n
-回傳嚴格 JSON 格式: {"to": "git_name_or_all", "content": "the message to send"}
-使用者輸入: "${prompt}"`)
-            ];
-
-            try {
-                const chatModels = await vscode.lm.selectChatModels({ family: 'gpt-4o' });
-                if (chatModels && chatModels.length > 0) {
-                    const chatResponse = await chatModels[0].sendRequest(messages, {}, token);
-                    let responseText = '';
-                    for await (const chunk of chatResponse.text) {
-                        responseText += chunk;
-                    }
-                    // parse JSON
-                    let parsed: any;
-                    try {
-                        const jsonStr = responseText.replace(/```json|```/g, '').trim();
-                        parsed = JSON.parse(jsonStr);
-                    } catch (e) {
-                        response.markdown(`⚠️ 解析失敗，直接採用輸入內容廣播...\n\n`);
-                        parsed = { to: 'all', content: prompt };
-                    }
-
-                    response.progress(`正在透過 Ably 傳送給 ${parsed.to}...`);
-                    await provider.postMessageToAbly(parsed.to, parsed.content, config);
-                    response.markdown(`✅ 成功發送給 **${parsed.to}**！\n\n> ${parsed.content}`);
-                }
-            } catch (e: any) {
-                response.markdown(`❌ 發送失敗：${e.message}`);
-            }
-        });
-        chatParticipant.iconPath = new vscode.ThemeIcon('comment-discussion');
-        context.subscriptions.push(chatParticipant);
-        outputChannel.appendLine('✓ Chat participant @happycoding registered');
 
     let setupDisposable = vscode.commands.registerCommand('happycoding.setup', async () => {
         const workspaceFolders = vscode.workspace.workspaceFolders;

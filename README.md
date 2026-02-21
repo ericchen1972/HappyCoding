@@ -79,4 +79,4 @@ So, just use HappyCoding.
 12. Broadcast messages to everyone will be displayed in <span style="color: #f1c40f;">yellow text</span>.
 13. You can paste images directly into the text input box to upload and display them in the chatroom (images are kept for one hour).
 
-![Setup Step 3](https://github.com/ericchen1972/HappyCoding/blob/main/images/setting3.png?raw=true)
+![Setup Step 3](https://github.com/ericchen1972/HappyCoding/blob/main/images/setting0.png?raw=true)
