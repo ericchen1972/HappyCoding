@@ -65,18 +65,18 @@ So, just use HappyCoding.
 4. If you need to collaborate internationally, input the DeepL API URL / Key here.
 5. Select the code presentation theme for the chatroom.
 
-![Setup Step 1](https://raw.githubusercontent.com/ericchen1972/HappyCoding/main/images/setting1.png)
+![Setup Step 1](https://github.com/ericchen1972/HappyCoding/blob/main/images/setting1.png?raw=true)
 
 6. Share your Ably Token and Message Encryption Key (if set) with your teammates.
 7. Once your teammates (including yourself) come online, you'll see a list of team members in the **Team Aliases** tab.
 8. Here, you can edit teammates' aliases and define the tone the AI should use when talking to them.
 9. If you want the AI to send messages to teammates dynamically, click the **Bind To AI Agent(MCP)** button. This button only needs to be clicked once—it applies to all future projects!
 
-![Setup Step 2](https://raw.githubusercontent.com/ericchen1972/HappyCoding/main/images/setting2.png)
+![Setup Step 2](https://github.com/ericchen1972/HappyCoding/blob/main/images/setting2.png?raw=true)
 
 10. Click the **lightning ⚡** button to connect to the chatroom.
 11. Online teammates will be displayed on the right. Click a teammate's name to send a private message.
 12. Broadcast messages to everyone will be displayed in <span style="color: #f1c40f;">yellow text</span>.
 13. You can paste images directly into the text input box to upload and display them in the chatroom (images are kept for one hour).
 
-![Setup Step 3](https://raw.githubusercontent.com/ericchen1972/HappyCoding/main/images/setting3.png)
+![Setup Step 3](https://github.com/ericchen1972/HappyCoding/blob/main/images/setting3.png?raw=true)
